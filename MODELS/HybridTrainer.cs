@@ -1,14 +1,121 @@
-﻿using System;
-using System.IO;
+﻿using System.IO;
 using System.Linq;
-using System.Collections.Generic;
 using PSO_ANN.ANN;
 using PSO_ANN.PSO;
 using PSO_ANN.UTILS;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using static global::PSO_ANN.PSO.Swarm;
 
 namespace PSO_ANN.MODELS
 {
+        public static class HybridTrainer
+        {
+            public static (double[] bestWeights, double trainMse, double valMse) Run(
+                string csvPath,
+                int hiddenNeurons = 10,
+                int particleCount = 50,
+                int iterations = 1000,
+                double psoInertia = 0.729,
+                double psoCog = 1.49445,
+                double psoSoc = 1.49445,
+                // GD refinement controls
+                int gdPeriod = 10,    // every N PSO its
+                int gdSteps = 3,     // inner GD steps
+                int gdElite = 5,     // refined particles
+                double gdLR = 0.01,  // GD learning rate
+                int gradBatch = 64,    // mini-batch for gradient
+                double epsilon = 1e-4   // finite-diff step
+            )
+            {
+                // 1) Load + normalize
+                var data = DataLoader.LoadAndNormalize(csvPath);
+                int nFeat = data[0].inputs.Length;
 
+                // 2) Split
+                var rng = new Random(42);
+                var shuffled = data.OrderBy(_ => rng.Next()).ToList();
+                int split = (int)(0.8 * shuffled.Count);
+                var train = shuffled.Take(split).ToList();
+                var val = shuffled.Skip(split).ToList();
+
+                // 3) ANN + swarm
+                var ann = new NeuralNetwork(new[] { nFeat, hiddenNeurons, 1 });
+                int dims = ann.GetWeightsCount();
+
+                var swarm = new HybridSwarm(particleCount, dims)
+                {
+                    Inertia = psoInertia,
+                    CognitiveFactor = psoCog,
+                    SocialFactor = psoSoc,
+                    GDLearningRate = gdLR,
+                    GDSteps = gdSteps,
+                    GDEliteCount = gdElite,
+                    GDPeriod = gdPeriod
+                };
+
+                // 4) Fitness on full train
+                double Fitness(double[] w)
+                {
+                    ann.SetWeights(w);
+                    double s = 0;
+                    foreach (var (x, t) in train)
+                    {
+                        var y = ann.Forward(x);
+                        s += Math.Pow(y[0] - t[0], 2);
+                    }
+                    return s / train.Count;
+                }
+
+                // 5) Numerical gradient on a *mini-batch* (cheap & stable)
+                var batch = train.OrderBy(_ => rng.Next()).Take(Math.Min(gradBatch, train.Count)).ToArray();
+
+                double BatchLoss(double[] w)
+                {
+                    ann.SetWeights(w);
+                    double s = 0;
+                    foreach (var (x, t) in batch)
+                    {
+                        var y = ann.Forward(x);
+                        s += Math.Pow(y[0] - t[0], 2);
+                    }
+                    return s / batch.Length;
+                }
+
+                double[] NumericalGrad(double[] w)
+                {
+                    var g = new double[w.Length];
+                    // forward-diff (half the cost of central; good enough on a mini-batch)
+                    double f0 = BatchLoss(w);
+                    for (int d = 0; d < w.Length; d++)
+                    {
+                        double tmp = w[d];
+                        double step = epsilon * (1.0 + Math.Abs(tmp));
+                        w[d] = tmp + step;
+                        double f1 = BatchLoss(w);
+                        g[d] = (f1 - f0) / step;
+                        w[d] = tmp;
+                    }
+                    return g;
+                }
+
+                // 6) Hybrid loop
+                for (int it = 1; it <= iterations; it++)
+                    swarm.UpdateParticlesHybrid(Fitness, NumericalGrad);
+
+                // 7) Metrics
+                double trainMse = swarm.GlobalBestFitness;
+                ann.SetWeights(swarm.GlobalBestPosition);
+                double valMse = val.Sum(d => Math.Pow(ann.Forward(d.inputs)[0] - d.targets[0], 2)) / val.Count;
+
+                return (swarm.GlobalBestPosition, trainMse, valMse);
+            }
+        }
+}
+
+
+    /*
     /// Runs hybrid PSO+gradient-descent training on an ANN using HybridSwarm.
 
     public static class HybridTrainer
@@ -91,4 +198,5 @@ namespace PSO_ANN.MODELS
             return (swarm.GlobalBestPosition, trainMse, valMse);
         }
     }
-}
+    */
+

@@ -1,9 +1,9 @@
-﻿using System;
+﻿using PSO_ANN.ANN;
+using PSO_ANN.MODELS;
+using PSO_ANN.UTILS;
+using System;
 using System.IO;
 using System.Linq;
-using PSO_ANN.MODELS;
-using PSO_ANN.ANN;
-using PSO_ANN.UTILS;
 
 namespace PSO_ANN
 {
@@ -11,79 +11,23 @@ namespace PSO_ANN
     {
         static void Main(string[] args)
         {
-            // File path setup
-            string exeDir = AppDomain.CurrentDomain.BaseDirectory;
-            string projDir = Path.GetFullPath(Path.Combine(exeDir, "..", "..", ".."));
-            string csvPath = Path.Combine(projDir, "DATA", "housing.csv");
-            if (!File.Exists(csvPath))
-            {
-                Console.WriteLine("Error: housing.csv not found.");
-                return;
-            }
+            string exe = AppDomain.CurrentDomain.BaseDirectory;
+            string proj = Path.GetFullPath(Path.Combine(exe, "..", "..", ".."));
+            string csv = Path.Combine(proj, "DATA", "housing.csv");
 
-            // Common settings
-            int hiddenNeurons = 10;
-            int particleCount = 50;
-            int iterations = 1000;
-            double learningRate = 0.01;
-            double epsilon = 1e-4;
+            // PSO-only
+            var (wPso, psoTrain, psoVal) = PSOTrainer.Run(csv);
+            Console.WriteLine($"PSO-only   Train MSE: {psoTrain:F6}");
+            Console.WriteLine($"PSO-only   Val   MSE: {psoVal:F6}");
 
-            // 1) PSO‑only optimization
-            Console.WriteLine("--- PSO‑only Optimization ---");
-            var (psoWeights, psoTrainMse, psoValMse) = PSOTrainer.Run(
-                csvPath,
-                hiddenNeurons,
-                particleCount,
-                iterations
+            // PSO + GD hybrid (memetic)
+            var (wHy, hyTrain, hyVal) = HybridTrainer.Run(
+                csv, hiddenNeurons: 10, particleCount: 50, iterations: 1000,
+                gdPeriod: 10, gdSteps: 3, gdElite: 5, gdLR: 0.01, gradBatch: 64, epsilon: 1e-4
             );
-            Console.WriteLine($"PSO-only train MSE: {psoTrainMse:F6}");
-            Console.WriteLine($"PSO-only val   MSE: {psoValMse:F6}");
-
-            // 2) Hybrid PSO+GD optimization
-            Console.WriteLine("--- Hybrid PSO+GD Optimization ---");
-            var (hybWeights, hybTrainMse, hybValMse) = HybridTrainer.Run(
-                csvPath,
-                hiddenNeurons,
-                particleCount,
-                iterations,
-                learningRate,
-                epsilon
-            );
-            Console.WriteLine($"Hybrid train MSE: {hybTrainMse:F6}");
-            Console.WriteLine($"Hybrid val   MSE: {hybValMse:F6}");
-
-            // 3) First 5 validation predictions
-            Console.WriteLine("--- First 5 Validation Predictions ---");
-            var data = DataLoader.LoadAndNormalize(csvPath);
-            var rnd = new Random(42);
-            var valData = data.OrderBy(_ => rnd.Next())
-                              .Skip((int)(0.8 * data.Count))
-                              .Take(5)
-                              .ToList();
-
-            for (int i = 0; i < valData.Count; i++)
-            {
-                var (inputs, targets) = valData[i];
-
-                var annPso = new NeuralNetwork(new[] { data[0].inputs.Length, hiddenNeurons, 1 });
-                annPso.SetWeights(psoWeights);
-                double predPso = annPso.Forward(inputs)[0];
-
-                var annHyb = new NeuralNetwork(new[] { data[0].inputs.Length, hiddenNeurons, 1 });
-                annHyb.SetWeights(hybWeights);
-                double predHyb = annHyb.Forward(inputs)[0];
-
-                // within 10% tolerance considered correct
-                bool okPso = Math.Abs(predPso - targets[0]) <= 0.1 * targets[0];
-                bool okHyb = Math.Abs(predHyb - targets[0]) <= 0.1 * targets[0];
-
-                Console.WriteLine(
-                    $"Sample {i + 1}: Actual={targets[0]:F3}, " +
-                    $"PSO={predPso:F3} ({(okPso ? "✓" : "✗")}), " +
-                    $"Hybrid={predHyb:F3} ({(okHyb ? "✓" : "✗")})"
-                );
-            }
+            Console.WriteLine($"Hybrid     Train MSE: {hyTrain:F6}");
+            Console.WriteLine($"Hybrid     Val   MSE: {hyVal:F6}");
         }
     }
-    // hello this is an update
+    
 }
