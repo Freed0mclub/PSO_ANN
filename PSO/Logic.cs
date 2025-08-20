@@ -29,10 +29,8 @@ namespace PSO_ANN.PSO
 
             for (int d = 0; d < dimensions; d++)
             {
-                // Initialize positions in [-initPosRange, +initPosRange]
-                Position[d] = (_rng.NextDouble() * 2 - 1) * initPosRange;
-                // Initialize velocities in [-initVelRange, +initVelRange]
-                Velocity[d] = (_rng.NextDouble() * 2 - 1) * initVelRange;
+                Position[d] = (_rng.NextDouble() * 2 - 1) * initPosRange;   // [-range, +range]
+                Velocity[d] = (_rng.NextDouble() * 2 - 1) * initVelRange;   // [-range, +range]
                 BestPosition[d] = Position[d];
             }
         }
@@ -52,18 +50,22 @@ namespace PSO_ANN.PSO
 
     /// Manages a swarm of standard PSO  particles optimizing a given fitness function.
 
+    /// Standard PSO swarm (no gradient logic here).
+   
     public class Swarm
     {
         public Particle[] Particles { get; }
+
+        // NOTE: protected setters allow derived classes (HybridSwarm) to update these.
         public double[] GlobalBestPosition { get; protected set; }
         public double GlobalBestFitness { get; protected set; }
 
         // PSO hyperparameters
-        public double Inertia { get; set; } = 0.729;
-        public double CognitiveFactor { get; set; } = 1.49445;
-        public double SocialFactor { get; set; } = 1.49445;
+        public double Inertia { get; set; } = 0.729;    // ω
+        public double CognitiveFactor { get; set; } = 1.49445;  // c1
+        public double SocialFactor { get; set; } = 1.49445;  // c2
 
-        // Velocity clamping
+        // Velocity clamping (optional safety)
         public double MaxVelocity { get; set; } = 0.5;
 
         private static readonly Random _rng = new Random();
@@ -79,25 +81,24 @@ namespace PSO_ANN.PSO
         }
 
 
-        // Performs one iteration of PSO: evaluations, best updates, velocity & position updates.
+        /// One PSO iteration: evaluate fitness, update personal/global bests, then velocity/positions.
 
         // <param name="fitnessFunc">Function that returns fitness for a given position vector.</param>
         public void UpdateParticles(Func<double[], double> fitnessFunc)
         {
-            // 1) Evaluate fitness for each particle and update personal & global bests
+            // 1) Evaluate fitness and refresh bests
             foreach (var p in Particles)
             {
-                double fitness = fitnessFunc(p.Position);
-                p.UpdatePersonalBest(fitness);
-
-                if (fitness < GlobalBestFitness)
+                double fit = fitnessFunc(p.Position);
+                p.UpdatePersonalBest(fit);
+                if (fit < GlobalBestFitness)
                 {
-                    GlobalBestFitness = fitness;
+                    GlobalBestFitness = fit;
                     Array.Copy(p.Position, GlobalBestPosition, p.Position.Length);
                 }
             }
 
-            // 2) Update velocity and position for each particle
+            // 2) Velocity and position updates
             foreach (var p in Particles)
             {
                 for (int d = 0; d < p.Position.Length; d++)
@@ -109,6 +110,9 @@ namespace PSO_ANN.PSO
                     double vel = Inertia * p.Velocity[d]
                                  + CognitiveFactor * r1 * (p.BestPosition[d] - p.Position[d])
                                  + SocialFactor * r2 * (GlobalBestPosition[d] - p.Position[d]);
+                    // clamp
+                    if (vel > MaxVelocity) vel = MaxVelocity;
+                    if (vel < -MaxVelocity) vel = -MaxVelocity;
 
                     // Clamp velocity
                     vel = Math.Max(-MaxVelocity, Math.Min(MaxVelocity, vel));
@@ -119,15 +123,18 @@ namespace PSO_ANN.PSO
                 }
             }
         }
+    }
 
-        /// Hybrid PSO: standard PSO step + periodic, local GD refinement
-        /// on an elite subset (or just gBest). No gradient stored in particles.
+    
+    /// Hybrid (memetic) PSO: normal PSO steps plus periodic local GD on elite particles.
+    /// No gradient is stored inside particles.
+   
         public class HybridSwarm : Swarm
         {
-            public double GDLearningRate { get; set; } = 0.01;
-            public int GDSteps { get; set; } = 3;    // inner steps per refinement
-            public int GDEliteCount { get; set; } = 5;    // how many particles to refine
-            public int GDPeriod { get; set; } = 10;   // refine every N PSO iterations
+        public double GDLearningRate { get; set; } = 0.01; // η
+        public int GDSteps { get; set; } = 3;    // inner GD steps per refinement
+        public int GDEliteCount { get; set; } = 5;    // number of particles refined
+        public int GDPeriod { get; set; } = 10;   // perform GD every N PSO iterations
 
             private int _iter = 0;
             private static readonly Random _rng = new Random();
@@ -136,31 +143,29 @@ namespace PSO_ANN.PSO
                 : base(particleCount, dimensions) { }
 
 
-            /// One hybrid iteration. We first do a normal PSO update (global exploration),
-            /// then every GDPeriod iterations we run a few GD steps on top-k particles
-            /// (local exploitation). Gradient is supplied as a delegate; nothing is stored.
+        /// One hybrid iteration: PSO update + (periodically) a few GD steps on the top-k particles.
 
+        /// <param name="fitnessFunc">Fitness function (lower is better).</param>
+        /// <param name="gradientFunc">Returns gradient of fitness at given weights.</param>
             public void UpdateParticlesHybrid(
                 Func<double[], double> fitnessFunc,
-                Func<double[], double[]> gradientFunc  // returns ∇_w fitness at given w
-            )
+            Func<double[], double[]> gradientFunc)
             {
-                // 1) Standard PSO pass
+            // 1) Global exploration
                 base.UpdateParticles(fitnessFunc);
                 _iter++;
 
-                // 2) Periodic local GD refinement (memetic step)
-                if (gradientFunc == null || (GDPeriod > 0 && (_iter % GDPeriod != 0)))
-                    return;
+            // 2) Periodic local exploitation via GD
+            if (gradientFunc == null) return;
+            if (GDPeriod > 0 && (_iter % GDPeriod != 0)) return;
 
-                // score current swarm and pick elites
-                var scored = Particles
+            var elites = Particles
                     .Select(p => new { P = p, Fit = fitnessFunc(p.Position) })
                     .OrderBy(a => a.Fit)
                     .Take(Math.Min(GDEliteCount, Particles.Length))
                     .ToArray();
 
-                foreach (var e in scored)
+            foreach (var e in elites)
                 {
                     var p = e.P;
                     // work on a local copy of weights
@@ -176,10 +181,11 @@ namespace PSO_ANN.PSO
                     double newFit = fitnessFunc(w);
                     if (newFit < e.Fit)
                     {
-                        // accept local improvement
+                    // accept improvement; reset velocity to avoid overshoot
                         Array.Copy(w, p.Position, w.Length);
-                        Array.Clear(p.Velocity, 0, p.Velocity.Length); // drop momentum
+                    Array.Clear(p.Velocity, 0, p.Velocity.Length);
                         p.UpdatePersonalBest(newFit);
+
                         if (newFit < GlobalBestFitness)
                         {
                             GlobalBestFitness = newFit;
@@ -189,6 +195,8 @@ namespace PSO_ANN.PSO
                 }
             }
         }
+}
+
 
         /*
          * commenting this approach out for now, as it is not used in the current implementation.
@@ -281,7 +289,7 @@ namespace PSO_ANN.PSO
         
     }
         */
-    }
-}
+
+
 
 
