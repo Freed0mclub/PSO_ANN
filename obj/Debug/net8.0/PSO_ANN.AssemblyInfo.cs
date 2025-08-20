@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("PSO_ANN")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+a960ca942eae86694abb96296af025670da50507")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+efb85b1a0a7edbd4dd3853796a9df440304da4c2")]
 [assembly: System.Reflection.AssemblyProductAttribute("PSO_ANN")]
 [assembly: System.Reflection.AssemblyTitleAttribute("PSO_ANN")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

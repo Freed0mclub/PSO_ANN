@@ -4,6 +4,7 @@ using PSO_ANN.UTILS;
 using System;
 using System.IO;
 using System.Linq;
+using System.Diagnostics;
 
 namespace PSO_ANN
 {
@@ -11,23 +12,58 @@ namespace PSO_ANN
     {
         static void Main(string[] args)
         {
+            // Locate dataset
             string exe = AppDomain.CurrentDomain.BaseDirectory;
             string proj = Path.GetFullPath(Path.Combine(exe, "..", "..", ".."));
             string csv = Path.Combine(proj, "DATA", "housing.csv");
 
-            // PSO-only
-            var (wPso, psoTrain, psoVal) = PSOTrainer.Run(csv);
-            Console.WriteLine($"PSO-only   Train MSE: {psoTrain:F6}");
-            Console.WriteLine($"PSO-only   Val   MSE: {psoVal:F6}");
+            // Global settings
+            int iterations = 1000;
+            double[] targets = { 0.02, 0.01, 0.005 }; // pick sensible thresholds
 
-            // PSO + GD hybrid (memetic)
-            var (wHy, hyTrain, hyVal) = HybridTrainer.Run(
-                csv, hiddenNeurons: 10, particleCount: 50, iterations: 1000,
-                gdPeriod: 10, gdSteps: 3, gdElite: 5, gdLR: 0.01, gradBatch: 64, epsilon: 1e-4
-            );
-            Console.WriteLine($"Hybrid     Train MSE: {hyTrain:F6}");
-            Console.WriteLine($"Hybrid     Val   MSE: {hyVal:F6}");
+            // ---- helper to run + report convergence ----
+            void ReportConvergence(
+                string label,
+                Func<Action<int, double>, (double[] w, double train, double val)> run)
+            {
+                var sw = Stopwatch.StartNew();
+                var firstHit = targets.ToDictionary(t => t, t => (int?)null);
+
+                var result = run((iter, best) =>
+                {
+                    foreach (var t in targets)
+                        if (best <= t && firstHit[t] == null)
+                            firstHit[t] = iter;
+                });
+
+                sw.Stop();
+
+                Console.WriteLine(
+                    $"\n{label}  Train {result.train:F6} | Val {result.val:F6} | Total {sw.Elapsed.TotalSeconds:F2}s");
+
+                foreach (var t in targets)
+                {
+                    int? k = firstHit[t];
+                    string tt = k.HasValue
+                        ? $"{k.Value} iters (~{sw.Elapsed.TotalMilliseconds * k.Value / iterations:F0} ms)"
+                        : "not reached";
+                    Console.WriteLine($"  Time-to-MSE ≤ {t}: {tt}");
+                }
+            }
+
+            // PSO-only
+            ReportConvergence("PSO", onIter =>
+                PSOTrainer.Run(csv, iterations: iterations, onIter: onIter, logEvery: 1));
+
+            // Hybrid PSO + GD (memetic)
+            ReportConvergence("Hybrid PSO+GD", onIter =>
+                HybridTrainer.Run(csv, iterations: iterations, onIter: onIter, logEvery: 1));
+
+            if (Debugger.IsAttached)
+            {
+                Console.WriteLine("\nPress any key to exit...");
+                Console.ReadKey();
+            }
         }
     }
-    
 }

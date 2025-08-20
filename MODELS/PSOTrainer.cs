@@ -22,7 +22,10 @@ namespace PSO_ANN.MODELS
             string csvPath,
             int hiddenNeurons = 10,
             int particleCount = 50,
-            int iterations = 1000)
+            int iterations = 1000,
+            Action<int, double>? onIter = null, int logEvery = 1) // log every N iterations
+            
+
         {
             // 1) Load & normalize data
             var data = DataLoader.LoadAndNormalize(csvPath);
@@ -56,8 +59,11 @@ namespace PSO_ANN.MODELS
 
             // 5) Run PSO optimization
             for (int i = 1; i <= iterations; i++)
+            {
                 swarm.UpdateParticles(fitness);
-
+                if (onIter != null && (i % logEvery == 0 || i == 1))
+                    onIter(i, swarm.GlobalBestFitness);
+            }
             // 6) Evaluate on validation set
             ann.SetWeights(swarm.GlobalBestPosition);
             double valMse = valSet.Sum(d =>
