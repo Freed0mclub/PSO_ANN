@@ -1,5 +1,6 @@
 
 using System;
+using System.Diagnostics;
 using System.Linq;
 using PSO_ANN.ANN;
 using PSO_ANN.PSO;
@@ -15,20 +16,23 @@ namespace PSO_ANN.MODELS
     {
         public static (double[] bestWeights, double trainMse, double valMse) Run(
         string csvPath,
-        int hiddenNeurons = 10,
-        int particleCount = 50,
-        int iterations = 1000,
-        double psoInertia = 0.729,
-        double psoCog = 1.49445,
-        double psoSoc = 1.49445,
+        int hiddenNeurons = 10,         // hidden layer size
+        int particleCount = 50,         // number of particles in the swarm
+        int iterations = 1000,          // total hybrid iterations
+        double psoInertia = 0.729,      // Inertia weight
+        double psoCog = 1.49445,        // Cognitive factor
+        double psoSoc = 1.49445,        // Social factor
+
         // GD refinement controls
-        int gdPeriod = 10,
-        int gdSteps = 3,
-        int gdElite = 5,
-        double gdLR = 0.01,
-        int gradBatch = 64,
-        double epsilon = 1e-4,
-        Action<int, double>? onIter = null, int logEvery = 1) // log every N iterations
+        int gdPeriod = 10,      // how often to do GD refinement
+        int gdSteps = 3,        // how many GD steps per refinement
+        int gdElite = 5,     // how many particles to refine
+        double gdLR = 0.01,  // learning rate for gradient component
+        int gradBatch = 64,    // mini-batch size for numerical gradient
+        double epsilon = 1e-4,   // finite-difference step for numerical gradient
+
+        // logging
+        Action<int, double>? onIter = null, int logEvery = 1, string? logCsvPath = null, int? seed = 42) // log every N iterations
         {
             // 1) Load & normalize
             var data = DataLoader.LoadAndNormalize(csvPath);
@@ -38,13 +42,14 @@ namespace PSO_ANN.MODELS
             // 2) Split
             var rng = new Random(42);
             var shuffled = data.OrderBy(_ => rng.Next()).ToList();
-            int split = (int)(0.8 * shuffled.Count);
+            int split = (int)(0.8 * shuffled.Count);    // 80% train
             var train = shuffled.Take(split).ToList();
             var val = shuffled.Skip(split).ToList();
 
 
             // 3) Build ANN & swarm
-            var ann = new NeuralNetwork(new[] { nFeat, hiddenNeurons, 1 });
+            var topology = new[] { nFeat, hiddenNeurons, 1 }; // input, hidden, output
+            var ann = new NeuralNetwork(topology);
             int dims = ann.GetWeightsCount();
 
 
@@ -60,34 +65,34 @@ namespace PSO_ANN.MODELS
             };
 
 
-            // 4) Fitness on full train set (robust)
+            // 4) Fitness on full train set and numerical gradient on mini-batch
             double Fitness(double[] w)
             {
                 ann.SetWeights(w);
-                double s = 0;
+                double s = 0;       // sum squared error
                 foreach (var (x, t) in train)
                 {
                     var y = ann.Forward(x);
-                    s += Math.Pow(y[0] - t[0], 2);
+                    s += Math.Pow(y[0] - t[0], 2);      //accumulate squared error
                 }
-                return s / train.Count;
+                return s / train.Count;     // mean squared error
             }
 
 
             // 5) Mini-batch numerical gradient (cheap and generic). Swap with backprop later.
-            var batch = train.OrderBy(_ => rng.Next()).Take(Math.Min(gradBatch, train.Count)).ToArray();
+            var batch = train.OrderBy(_ => rng.Next()).Take(Math.Min(gradBatch, train.Count)).ToArray();        //initial mini-batch
 
 
             double BatchLoss(double[] w)
             {
                 ann.SetWeights(w);
                 double s = 0;
-                foreach (var (x, t) in batch)
+                foreach (var (x, t) in batch)       // fixed mini-batch
                 {
-                    var y = ann.Forward(x);
-                    s += Math.Pow(y[0] - t[0], 2);
-                }
-                return s / batch.Length;
+                    var y = ann.Forward(x);         // forward pass
+                    s += Math.Pow(y[0] - t[0], 2);      // accumulate squared error
+                }   
+                return s / batch.Length;        // mean squared error
             }
 
 
@@ -124,13 +129,18 @@ namespace PSO_ANN.MODELS
                 return g;
             }
 
+            // Optional CSV logging
+            CsvLogger? logger = logCsvPath != null  ? new CsvLogger(logCsvPath, "iter", "best_train_mse", "elapsed_ms"): null;
 
             // 6) Hybrid loop
+            var sw = Stopwatch.StartNew();
             for (int it = 1; it <= iterations; it++)
             {
                 swarm.UpdateParticlesHybrid(Fitness, NumericalGrad);
                 if (onIter != null && (it % logEvery == 0 || it == 1))
                     onIter(it, swarm.GlobalBestFitness);
+                if (logger != null && (it % logEvery == 0 || it == 1))
+                    logger.WriteRow(it, swarm.GlobalBestFitness, sw.Elapsed.TotalMilliseconds);
             }
 
             // 7) Final metrics
@@ -141,6 +151,8 @@ namespace PSO_ANN.MODELS
 
             return (swarm.GlobalBestPosition, trainMse, valMse);
         }
+        //helper to copy arrays
+        private static double[] Copy(double[] w) => (double[])w.Clone();
     }
 }
 
