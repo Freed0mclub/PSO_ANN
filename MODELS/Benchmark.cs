@@ -86,7 +86,7 @@ namespace PSO_ANN.MODELS
 
         public static (double[] xbest, double fbest, TimeSpan elapsed) RunHybrid(
             Func<double[], double> f,
-            Func<double[], double[]> NumericalGrad, // gradient oracle; pass a wrapper over central diff
+            Func<double[], double[]> NumericalGrad, // numerial gradient
             int dim,
             int iterations = 1000,
             int particles = 40,

@@ -26,7 +26,7 @@ namespace PSO_ANN.UTILS
             var raw = File.ReadAllLines(filePath)
                 .Where(line => !string.IsNullOrWhiteSpace(line))
                 .Select(line => line
-                    .Split((char[])null, StringSplitOptions.RemoveEmptyEntries)
+                    .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
                     .Select(token => double.Parse(token, CultureInfo.InvariantCulture))
                     .ToArray())
                 .ToList();

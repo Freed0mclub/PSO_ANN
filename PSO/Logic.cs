@@ -132,8 +132,8 @@ namespace PSO_ANN.PSO
       
         /// One hybrid iteration: PSO update + (periodically) a few GD steps on the top-k particles.
       
-        /// <param name="fitnessFunc">Fitness function (lower is better).</param>
-        /// <param name="gradientFunc">Returns gradient of fitness at given weights.</param>
+        /// <param name="fitnessFunc">Fitness function (lower is better).
+        /// <param name="gradientFunc">Returns gradient of fitness at given weights.
         public void UpdateParticlesHybrid(
             Func<double[], double> fitnessFunc,
             Func<double[], double[]> gradientFunc)
